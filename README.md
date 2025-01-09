@@ -49,7 +49,10 @@ To speed up image downloads in China, you can use Nanjing University's Open Sour
 
 ```bash
 docker pull ghcr.nju.edu.cn/<your-username>/<your-image>:<tag>
+
+docker pull ghcr.nju.edu.cn/rzrcazk/voapi:latest
 ```
+
 
 This significantly improves the speed of pulling images from GHCR.IO within China.
 
