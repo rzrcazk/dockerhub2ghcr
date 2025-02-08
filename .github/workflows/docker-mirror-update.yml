@@ -3,61 +3,85 @@ permissions: write-all
 
 on:
   workflow_dispatch:
-    inputs:
-      dockerhub_image:
-        description: '选择要更新的镜像'
-        required: true
-        type: choice
-        options: |
-          `${{ github.event.repository.default_branch != '' && 
-          contains(github.event.repository.object.text, 'docker-images.json') && 
-          fromJson(github.event.repository.object.text).images 
-          ? keys(fromJson(github.event.repository.object.text).images) 
-          : ['暂无镜像，请先运行新增workflow添加'] }}`
-      tag:
-        description: '选择镜像标签'
-        required: true
-        type: choice
-        options: |
-          `${{ github.event.repository.default_branch != '' && 
-          contains(github.event.repository.object.text, 'docker-images.json') && 
-          fromJson(github.event.repository.object.text).images[inputs.dockerhub_image] 
-          ? fromJson(github.event.repository.object.text).images[inputs.dockerhub_image] 
-          : ['latest'] }}`
-      ghcr_image:
-        description: '推送到GHCR.IO的镜像名称'
-        required: true
-        default: 'myimage'
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ inputs.ghcr_image }}
 
 jobs:
-  mirror:
+  get_options:
     runs-on: ubuntu-latest
+    outputs:
+      images: ${{ steps.set-options.outputs.images }}
+      tags: ${{ steps.set-options.outputs.tags }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Get options from json
+        id: set-options
+        run: |
+          if [ -f docker-images.json ]; then
+            images=$(jq -r '.images | keys | join(",")' docker-images.json)
+            firstImage=$(jq -r '.images | keys | .[0]' docker-images.json)
+            tags=$(jq -r --arg img "$firstImage" '.images[$img] | join(",")' docker-images.json)
+            echo "images=${images}" >> $GITHUB_OUTPUT
+            echo "tags=${tags}" >> $GITHUB_OUTPUT
+          else
+            echo "images=none" >> $GITHUB_OUTPUT
+            echo "tags=none" >> $GITHUB_OUTPUT
+          fi
+
+  mirror:
+    needs: get_options
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check options
+        run: |
+          if [[ "${{ needs.get_options.outputs.images }}" == "none" ]]; then
+            echo "没有可用的镜像，请先运行新增workflow添加镜像"
+            exit 1
+          fi
 
       - name: 登录到GitHub容器注册表
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}  
-          password: ${{ secrets.GITHUB_TOKEN }} 
-      
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 选择镜像和标签
+        run: |
+          IFS=',' read -ra IMAGES <<< "${{ needs.get_options.outputs.images }}"
+          IFS=',' read -ra TAGS <<< "${{ needs.get_options.outputs.tags }}"
+          
+          echo "可用的镜像："
+          for img in "${IMAGES[@]}"; do
+            echo "- $img"
+          done
+          
+          echo "可用的标签："
+          for tag in "${TAGS[@]}"; do
+            echo "- $tag"
+          done
+          
+          # 使用第一个可用的镜像和标签
+          SELECTED_IMAGE=${IMAGES[0]}
+          SELECTED_TAG=${TAGS[0]}
+          
+          echo "选择的镜像: $SELECTED_IMAGE"
+          echo "选择的标签: $SELECTED_TAG"
+          
+          echo "SELECTED_IMAGE=$SELECTED_IMAGE" >> $GITHUB_ENV
+          echo "SELECTED_TAG=$SELECTED_TAG" >> $GITHUB_ENV
+
       - name: 从DockerHub拉取Docker镜像
         run: |
-          docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
-      
+          docker pull ${{ env.SELECTED_IMAGE }}:${{ env.SELECTED_TAG }}
+
       - name: 设置小写的 GitHub 用户名
         run: echo "ACTOR_LOWER=$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-      
+
       - name: 为GitHub容器注册表标记Docker镜像
         run: |
-          docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-      
+          docker tag ${{ env.SELECTED_IMAGE }}:${{ env.SELECTED_TAG }} ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ env.SELECTED_TAG }}
+
       - name: 将Docker镜像推送到GitHub容器注册表
         run: |
-          docker push ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+          docker push ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ env.SELECTED_TAG }}
