@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       dockerhub_image:
-        description: '输入 DockerHub 镜像名称 (例如: nginx 或 organization/image)'
+        description: '输入 DockerHub 镜像名称 (例如: nginx)'
         required: true
         type: string
       tag:
@@ -28,35 +28,63 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Update images list
+      - name: Create update workflow
         run: |
-          # 如果文件不存在，创建基础结构
-          if [ ! -f docker-images.json ]; then
-            echo '{"images":{}}' > docker-images.json
-          fi
+          # 创建该镜像的专属更新 workflow
+          WORKFLOW_NAME="${{ inputs.dockerhub_image }}-${{ inputs.tag }}"
+          WORKFLOW_NAME=$(echo "$WORKFLOW_NAME" | tr '/' '-')
           
-          # 更新 JSON 文件，只添加当前输入的标签
-          jq --arg img "${{ inputs.dockerhub_image }}" \
-             --arg tag "${{ inputs.tag }}" \
-             '.images[$img] = if has("images") and has("images"[$img]) 
-                             then ((.images[$img] + [$tag]) | unique)
-                             else [$tag]
-                             end' \
-             docker-images.json > temp.json && mv temp.json docker-images.json
+          cat > .github/workflows/${WORKFLOW_NAME}-update.yml <<EOF
+name: 更新 ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+permissions: write-all
 
-          # 提交更新
+on:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ inputs.ghcr_image }}
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 登录到GitHub容器注册表
+        uses: docker/login-action@v3
+        with:
+          registry: \${{ env.REGISTRY }}
+          username: \${{ github.actor }}
+          password: \${{ secrets.GITHUB_TOKEN }}
+
+      - name: 从DockerHub拉取Docker镜像
+        run: |
+          docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+
+      - name: 设置小写的 GitHub 用户名
+        run: echo "ACTOR_LOWER=\$(echo '\${{ github.actor }}' | tr '[:upper:]' '[:lower:]')" >> \$GITHUB_ENV
+
+      - name: 为GitHub容器注册表标记Docker镜像
+        run: |
+          docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} \${{ env.REGISTRY }}/\${{ env.ACTOR_LOWER }}/\${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+
+      - name: 将Docker镜像推送到GitHub容器注册表
+        run: |
+          docker push \${{ env.REGISTRY }}/\${{ env.ACTOR_LOWER }}/\${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+EOF
+
+          # 提交新的 workflow 文件
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add docker-images.json
-          git commit -m "Update docker images list: Added ${{ inputs.dockerhub_image }}:${{ inputs.tag }}" || echo "No changes to commit"
+          git add .github/workflows/${WORKFLOW_NAME}-update.yml
+          git commit -m "Add update workflow for ${{ inputs.dockerhub_image }}:${{ inputs.tag }}" || echo "No changes to commit"
           git push || echo "No changes to push"
 
       - name: 登录到GitHub容器注册表
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}  
-          password: ${{ secrets.GITHUB_TOKEN }} 
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       
       - name: 从DockerHub拉取Docker镜像
         run: |
