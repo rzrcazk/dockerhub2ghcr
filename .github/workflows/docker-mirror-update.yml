@@ -1,0 +1,50 @@
+name: Docker镜像同步(更新)
+on:
+  workflow_dispatch:
+
+jobs:
+  select_and_mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Read available images
+        id: read_images
+        run: |
+          if [ -f docker-images.json ]; then
+            IMAGES=$(jq -r '.images | keys[]' docker-images.json)
+            echo "images=$(echo $IMAGES | tr '\n' ',')" >> $GITHUB_OUTPUT
+            # 获取第一个镜像的标签作为示例
+            FIRST_IMAGE=$(echo $IMAGES | head -n1)
+            if [ ! -z "$FIRST_IMAGE" ]; then
+              TAGS=$(jq -r ".images[\"$FIRST_IMAGE\"][]" docker-images.json)
+              echo "tags=$(echo $TAGS | tr '\n' ',')" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "images=none" >> $GITHUB_OUTPUT
+            echo "tags=none" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: actions/github-script@v6
+        with:
+          script: |
+            const images = '${{ steps.read_images.outputs.images }}'.split(',').filter(Boolean);
+            const tags = '${{ steps.read_images.outputs.tags }}'.split(',').filter(Boolean);
+            
+            if (images.length === 0) {
+              core.setFailed('没有可用的镜像，请先运行添加镜像的 workflow');
+              return;
+            }
+
+            const { data: workflow } = await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: '将DockerHub镜像复制到GHCR.IO.yml',
+              ref: context.ref,
+              inputs: {
+                dockerhub_image: images[0],
+                tag: tags[0],
+                ghcr_image: 'myimage'
+              }
+            });
