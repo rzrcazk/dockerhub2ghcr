@@ -1,5 +1,5 @@
 name: Docker镜像同步(新增)
-permissions: write-all        
+permissions: write-all
 on:
   workflow_dispatch:
     inputs:
