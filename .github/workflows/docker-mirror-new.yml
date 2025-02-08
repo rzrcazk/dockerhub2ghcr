@@ -35,36 +35,20 @@ jobs:
             echo '{"images":{}}' > docker-images.json
           fi
           
-          # 检查是否是官方镜像
-          if [[ "${{ inputs.dockerhub_image }}" == *"/"* ]]; then
-            # 非官方镜像
-            TAGS=$(curl -s "https://hub.docker.com/v2/repositories/${{ inputs.dockerhub_image }}/tags?page_size=100" | jq -r '.results[].name')
-          else
-            # 官方镜像
-            TAGS=$(curl -s "https://hub.docker.com/v2/repositories/library/${{ inputs.dockerhub_image }}/tags?page_size=100" | jq -r '.results[].name')
-          fi
-          
-          # 检查是否成功获取标签
-          if [ -z "$TAGS" ]; then
-            echo "未能获取到标签，使用当前标签"
-            TAGS="${{ inputs.tag }}"
-          fi
-          
-          # 更新 JSON 文件
-          echo "$TAGS" | jq -R -s 'split("\n") | map(select(length > 0))' > tags.json
-          
+          # 更新 JSON 文件，只添加当前输入的标签
           jq --arg img "${{ inputs.dockerhub_image }}" \
-             --slurpfile tags tags.json \
-             '.images[$img] = $tags[0]' \
+             --arg tag "${{ inputs.tag }}" \
+             '.images[$img] = if has("images") and has("images"[$img]) 
+                             then ((.images[$img] + [$tag]) | unique)
+                             else [$tag]
+                             end' \
              docker-images.json > temp.json && mv temp.json docker-images.json
-          
-          rm tags.json
 
           # 提交更新
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
           git add docker-images.json
-          git commit -m "Update docker images list: Added ${{ inputs.dockerhub_image }}" || echo "No changes to commit"
+          git commit -m "Update docker images list: Added ${{ inputs.dockerhub_image }}:${{ inputs.tag }}" || echo "No changes to commit"
           git push || echo "No changes to push"
 
       - name: 登录到GitHub容器注册表
