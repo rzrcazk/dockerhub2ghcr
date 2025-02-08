@@ -1,50 +1,63 @@
 name: Docker镜像同步(更新)
+permissions: write-all
+
 on:
   workflow_dispatch:
+    inputs:
+      dockerhub_image:
+        description: '选择要更新的镜像'
+        required: true
+        type: choice
+        options: |
+          `${{ github.event.repository.default_branch != '' && 
+          contains(github.event.repository.object.text, 'docker-images.json') && 
+          fromJson(github.event.repository.object.text).images 
+          ? keys(fromJson(github.event.repository.object.text).images) 
+          : ['暂无镜像，请先运行新增workflow添加'] }}`
+      tag:
+        description: '选择镜像标签'
+        required: true
+        type: choice
+        options: |
+          `${{ github.event.repository.default_branch != '' && 
+          contains(github.event.repository.object.text, 'docker-images.json') && 
+          fromJson(github.event.repository.object.text).images[inputs.dockerhub_image] 
+          ? fromJson(github.event.repository.object.text).images[inputs.dockerhub_image] 
+          : ['latest'] }}`
+      ghcr_image:
+        description: '推送到GHCR.IO的镜像名称'
+        required: true
+        default: 'myimage'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ inputs.ghcr_image }}
 
 jobs:
-  select_and_mirror:
+  mirror:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Read available images
-        id: read_images
-        run: |
-          if [ -f docker-images.json ]; then
-            IMAGES=$(jq -r '.images | keys[]' docker-images.json)
-            echo "images=$(echo $IMAGES | tr '\n' ',')" >> $GITHUB_OUTPUT
-            # 获取第一个镜像的标签作为示例
-            FIRST_IMAGE=$(echo $IMAGES | head -n1)
-            if [ ! -z "$FIRST_IMAGE" ]; then
-              TAGS=$(jq -r ".images[\"$FIRST_IMAGE\"][]" docker-images.json)
-              echo "tags=$(echo $TAGS | tr '\n' ',')" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "images=none" >> $GITHUB_OUTPUT
-            echo "tags=none" >> $GITHUB_OUTPUT
-          fi
-
-      - uses: actions/github-script@v6
+      - name: 登录到GitHub容器注册表
+        uses: docker/login-action@v3
         with:
-          script: |
-            const images = '${{ steps.read_images.outputs.images }}'.split(',').filter(Boolean);
-            const tags = '${{ steps.read_images.outputs.tags }}'.split(',').filter(Boolean);
-            
-            if (images.length === 0) {
-              core.setFailed('没有可用的镜像，请先运行添加镜像的 workflow');
-              return;
-            }
-
-            const { data: workflow } = await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: '将DockerHub镜像复制到GHCR.IO.yml',
-              ref: context.ref,
-              inputs: {
-                dockerhub_image: images[0],
-                tag: tags[0],
-                ghcr_image: 'myimage'
-              }
-            });
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}  
+          password: ${{ secrets.GITHUB_TOKEN }} 
+      
+      - name: 从DockerHub拉取Docker镜像
+        run: |
+          docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+      
+      - name: 设置小写的 GitHub 用户名
+        run: echo "ACTOR_LOWER=$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+      
+      - name: 为GitHub容器注册表标记Docker镜像
+        run: |
+          docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+      
+      - name: 将Docker镜像推送到GitHub容器注册表
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
