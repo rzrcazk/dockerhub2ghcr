@@ -7,13 +7,11 @@ on:
       dockerhub_image:
         description: '选择要更新的镜像'
         required: true
-        type: choice
-        options: ${{ fromJson(github.event.repository.default_branch != '' && contains(readFile('docker-images.json'), '{') && fromJson(readFile('docker-images.json')).images ? toJson(keys(fromJson(readFile('docker-images.json')).images)) : '["请先运行新增workflow添加镜像"]') }}
+        type: string
       tag:
-        description: '选择镜像标签'
+        description: '选择标签'
         required: true
-        type: choice
-        options: ${{ fromJson(github.event.repository.default_branch != '' && contains(readFile('docker-images.json'), '{') && fromJson(readFile('docker-images.json')).images[inputs.dockerhub_image] ? toJson(fromJson(readFile('docker-images.json')).images[inputs.dockerhub_image]) : '["latest"]') }}
+        type: string
       ghcr_image:
         description: '推送到GHCR.IO的镜像名称'
         required: true
@@ -29,12 +27,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: 读取镜像信息
-        id: read_images
-        run: |
-          IMAGES=$(cat docker-images.json | jq -r '.images | keys[]')
-          echo "Available images: $IMAGES"
 
       - name: 登录到GitHub容器注册表
         uses: docker/login-action@v3
