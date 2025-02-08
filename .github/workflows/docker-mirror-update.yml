@@ -3,32 +3,70 @@ permissions: write-all
 
 on:
   workflow_dispatch:
-    inputs:
-      dockerhub_image:
-        description: '选择要更新的镜像'
-        required: true
-        type: choice
-        options: ${{ fromJson(github.event.repository.default_branch != '' && contains(github.event.repository.object.text, 'docker-images.json') && fromJson(github.event.repository.object.text).images ? toJson(keys(fromJson(github.event.repository.object.text).images)) : '["请先运行新增workflow添加镜像"]') }}
-      tag:
-        description: '选择镜像标签'
-        required: true
-        type: choice
-        options: ${{ fromJson(github.event.repository.default_branch != '' && contains(github.event.repository.object.text, 'docker-images.json') && fromJson(github.event.repository.object.text).images[inputs.dockerhub_image] ? toJson(fromJson(github.event.repository.object.text).images[inputs.dockerhub_image]) : '["latest"]') }}
-      ghcr_image:
-        description: '推送到GHCR.IO的镜像名称'
-        required: true
-        default: 'myimage'
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ inputs.ghcr_image }}
 
 jobs:
-  mirror:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Generate matrix
+        id: set-matrix
+        run: |
+          if [ -f docker-images.json ]; then
+            echo "matrix=$(cat docker-images.json)" >> $GITHUB_OUTPUT
+          else
+            echo "matrix={\"images\":{}}" >> $GITHUB_OUTPUT
+          fi
+
+  update:
+    needs: setup
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        
+      - name: Show available options
+        id: get-options
+        run: |
+          IMAGES=$(echo '${{ needs.setup.outputs.matrix }}' | jq -r '.images | keys[]')
+          echo "Available images:"
+          echo "$IMAGES"
+          
+          # 创建一个临时 workflow 文件
+          cat > temp-workflow.yml <<EOF
+          name: Docker镜像同步(更新)
+          on:
+            workflow_dispatch:
+              inputs:
+                dockerhub_image:
+                  description: '选择要更新的镜像'
+                  required: true
+                  type: choice
+                  options:
+                    ${{ join(fromJson(needs.setup.outputs.matrix).images | keys, '\n    - ') }}
+                tag:
+                  description: '选择镜像标签'
+                  required: true
+                  type: choice
+                  options:
+                    ${{ join(fromJson(needs.setup.outputs.matrix).images[inputs.dockerhub_image], '\n    - ') }}
+                ghcr_image:
+                  description: '推送到GHCR.IO的镜像名称'
+                  required: true
+                  default: 'myimage'
+          EOF
+          
+          mv temp-workflow.yml .github/workflows/docker-mirror-update.yml
+          
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git add .github/workflows/docker-mirror-update.yml
+          git commit -m "Update workflow with current options"
+          git push
 
       - name: 登录到GitHub容器注册表
         uses: docker/login-action@v3
