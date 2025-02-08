@@ -31,45 +31,27 @@ jobs:
       - name: Create update workflow
         run: |
           mkdir -p .github/workflows
-          WORKFLOW_NAME="${{ inputs.dockerhub_image }}-${{ inputs.tag }}"
-          WORKFLOW_NAME=$(echo "$WORKFLOW_NAME" | tr '/' '-')
+          cat > .github/workflows/${{ inputs.dockerhub_image }}-${{ inputs.tag }}-update.yml << 'EOL'
+          name: Update ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+          on:
+            workflow_dispatch:
+          jobs:
+            update:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: docker/login-action@v3
+                  with:
+                    registry: ghcr.io
+                    username: ${{ github.actor }}
+                    password: ${{ secrets.GITHUB_TOKEN }}
+                - run: docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
+                - run: docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ghcr.io/${{ github.actor }}/${{ inputs.ghcr_image }}:${{ inputs.tag }}
+                - run: docker push ghcr.io/${{ github.actor }}/${{ inputs.ghcr_image }}:${{ inputs.tag }}
+          EOL
           
-          echo "name: 更新 ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
-permissions: write-all
-
-on:
-  workflow_dispatch:
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ inputs.ghcr_image }}
-
-jobs:
-  mirror:
-    runs-on: ubuntu-latest
-    steps:
-      - name: 登录到GitHub容器注册表
-        uses: docker/login-action@v3
-        with:
-          registry: \${{ env.REGISTRY }}
-          username: \${{ github.actor }}
-          password: \${{ secrets.GITHUB_TOKEN }}
-
-      - name: 拉取Docker镜像
-        run: docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
-
-      - name: 设置GitHub用户名
-        run: echo \"ACTOR_LOWER=\$(echo '\${{ github.actor }}' | tr '[:upper:]' '[:lower:]')\" >> \$GITHUB_ENV
-
-      - name: 标记Docker镜像
-        run: docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} \${{ env.REGISTRY }}/\${{ env.ACTOR_LOWER }}/\${{ env.IMAGE_NAME }}:${{ inputs.tag }}
-
-      - name: 推送Docker镜像
-        run: docker push \${{ env.REGISTRY }}/\${{ env.ACTOR_LOWER }}/\${{ env.IMAGE_NAME }}:${{ inputs.tag }}" > .github/workflows/${WORKFLOW_NAME}-update.yml
-
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
-          git add .github/workflows/${WORKFLOW_NAME}-update.yml
+          git add .github/workflows/
           git commit -m "Add update workflow for ${{ inputs.dockerhub_image }}:${{ inputs.tag }}"
           git push
 
@@ -83,11 +65,8 @@ jobs:
       - name: 拉取Docker镜像
         run: docker pull ${{ inputs.dockerhub_image }}:${{ inputs.tag }}
       
-      - name: 设置GitHub用户名
-        run: echo "ACTOR_LOWER=$(echo '${{ github.actor }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-      
       - name: 标记Docker镜像
-        run: docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+        run: docker tag ${{ inputs.dockerhub_image }}:${{ inputs.tag }} ${{ env.REGISTRY }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
       
       - name: 推送Docker镜像
-        run: docker push ${{ env.REGISTRY }}/${{ env.ACTOR_LOWER }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
+        run: docker push ${{ env.REGISTRY }}/${{ github.actor }}/${{ env.IMAGE_NAME }}:${{ inputs.tag }}
