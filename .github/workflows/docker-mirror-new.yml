@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       dockerhub_image:
-        description: '输入 DockerHub 镜像名称 (例如: nginx)'
+        description: '输入 DockerHub 镜像名称 (例如: nginx 或 organization/image)'
         required: true
         type: string
       tag:
@@ -35,15 +35,30 @@ jobs:
             echo '{"images":{}}' > docker-images.json
           fi
           
-          # 获取镜像的所有可用标签
-          TAGS=$(curl -s "https://hub.docker.com/v2/repositories/library/${{ inputs.dockerhub_image }}/tags?page_size=100" | jq -r '.results[].name')
+          # 检查是否是官方镜像
+          if [[ "${{ inputs.dockerhub_image }}" == *"/"* ]]; then
+            # 非官方镜像
+            TAGS=$(curl -s "https://hub.docker.com/v2/repositories/${{ inputs.dockerhub_image }}/tags?page_size=100" | jq -r '.results[].name')
+          else
+            # 官方镜像
+            TAGS=$(curl -s "https://hub.docker.com/v2/repositories/library/${{ inputs.dockerhub_image }}/tags?page_size=100" | jq -r '.results[].name')
+          fi
+          
+          # 检查是否成功获取标签
+          if [ -z "$TAGS" ]; then
+            echo "未能获取到标签，使用当前标签"
+            TAGS="${{ inputs.tag }}"
+          fi
           
           # 更新 JSON 文件
+          echo "$TAGS" | jq -R -s 'split("\n") | map(select(length > 0))' > tags.json
+          
           jq --arg img "${{ inputs.dockerhub_image }}" \
-             --arg tag "${{ inputs.tag }}" \
-             --arg tags "$TAGS" \
-             '.images[$img] = ($tags | split("\n") | map(select(length > 0)))' \
+             --slurpfile tags tags.json \
+             '.images[$img] = $tags[0]' \
              docker-images.json > temp.json && mv temp.json docker-images.json
+          
+          rm tags.json
 
           # 提交更新
           git config --global user.name "GitHub Action"
